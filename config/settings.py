@@ -1,0 +1,10 @@
+
+DATASET_PATH = "/home/b224/wwmt/VFMStitch_ABUS_research/dataset"
+
+DEVICE = "cuda"
+
+POINT_THRESHOLD = 0.6
+POINT_SAMPLE = 3000
+
+ICP_THRESHOLD = 8.0
+PCA_DIM = 16
