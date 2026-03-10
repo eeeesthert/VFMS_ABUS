@@ -15,7 +15,7 @@ def compute_weight_map(shape):
 
     weight += 1e-3
     # weight /= weight.max()
-     weight /= (weight.max() + 1e-8)
+    weight /= (weight.max() + 1e-8)
 
     return weight
 
