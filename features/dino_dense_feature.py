@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 import timm
 import os
+from sklearn.decomposition import PCA
 
 
 class DenseDINO:
@@ -12,18 +13,14 @@ class DenseDINO:
 
         self.device = device
 
-        model_path = os.path.join(
-            os.path.dirname(__file__),
-            "/home/b224/wwmt/VFMStitch_ABUS_research/models/dinov2_vitb14_pretrain.pth"
-        )
+        model_path = "/home/b224/wwmt/VFMStitch_ABUS_research/models/dinov2_vitb14_pretrain.pth"
 
         self.model = timm.create_model(
-            #"vit_large_patch14_dinov2",
             "vit_base_patch14_dinov2",
             pretrained=False
         )
-        #ckpt = torch.load(model_path, map_location="cpu")
-        ckpt = torch.load(model_path, map_location="cpu", weights_only=True)
+
+        ckpt = torch.load(model_path, map_location="cpu")
 
         if "teacher" in ckpt:
             ckpt = ckpt["teacher"]
@@ -33,40 +30,113 @@ class DenseDINO:
         self.model = self.model.to(device)
         self.model.eval()
 
-        #self.transform = T.Compose([
-         #   T.Resize((224, 224)),
-          #  T.ToTensor()
-        #])
         self.transform = T.Compose([
-        T.Resize(518),
-        T.CenterCrop(518),
-        T.ToTensor()
-    ])
+            T.Resize(518),
+            T.CenterCrop(518),
+            T.ToTensor(),
+            T.Normalize(
+                mean=(0.485,0.456,0.406),
+                std=(0.229,0.224,0.225)
+            )
+        ])
+
+
+    def normalize_slice(self, img):
+
+        img = img.astype(np.float32)
+
+        img = img - img.min()
+
+        if img.max() > 0:
+            img = img / img.max()
+
+        img = (img * 255).astype(np.uint8)
+
+        return img
+
 
     def extract_slice(self, img):
+
+        img = self.normalize_slice(img)
 
         img = Image.fromarray(img).convert("RGB")
 
         img = self.transform(img).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
+
             feat = self.model.forward_features(img)
-            #print(type(feat), feat.shape)
-            #feat = feat["x_norm_patchtokens"]
-            feat = feat[:,1:,:]
-            feat = feat.reshape(1,37,37,-1)
 
-        return feat.cpu().numpy()[0]
+            tokens = feat[:,1:,:]   # remove cls token
 
-    def extract_volume(self, volume):
+        tokens = tokens.cpu().numpy()[0]
 
-        feats = []
+        n = tokens.shape[0]
+
+        grid = int(np.sqrt(n))
+
+        feat_map = tokens.reshape(grid,grid,-1)
+
+        return feat_map
 
 
+    def pca_reduce(self, feat_map, dim=16):
+
+        h,w,c = feat_map.shape
+
+        flat = feat_map.reshape(-1,c)
+
+        pca = PCA(n_components=dim)
+
+        flat = pca.fit_transform(flat)
+
+        return flat.reshape(h,w,dim)
+
+
+    def extract_volume(self, volume, batch_size=32):
+
+        slices = []
+    
         for i in range(volume.shape[0]):
-
-            slice_img = volume[i, :, :]
-
-            feats.append(self.extract_slice(slice_img))
-
-        return np.array(feats)
+    
+            img = volume[i,:,:]
+    
+            img = self.normalize_slice(img)
+    
+            img = Image.fromarray(img).convert("RGB")
+    
+            img = self.transform(img)
+    
+            slices.append(img)
+    
+        slices = torch.stack(slices).to(self.device)
+    
+        feats = []
+    
+        with torch.no_grad():
+    
+            for i in range(0, slices.shape[0], batch_size):
+    
+                batch = slices[i:i+batch_size]
+    
+                feat = self.model.forward_features(batch)
+    
+                tokens = feat[:,1:,:]
+    
+                B,N,C = tokens.shape
+    
+                grid = int(np.sqrt(N))
+    
+                tokens = tokens.reshape(B,grid,grid,C)
+    
+                feats.append(tokens.cpu().numpy())
+    
+        feats = np.concatenate(feats,axis=0)
+    
+        feats_reduced = []
+    
+        for f in feats:
+    
+            feats_reduced.append(self.pca_reduce(f))
+    
+        return np.array(feats_reduced)

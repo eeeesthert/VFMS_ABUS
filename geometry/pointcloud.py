@@ -1,22 +1,78 @@
-
 import numpy as np
-from config.settings import POINT_THRESHOLD,POINT_SAMPLE
+import cv2
+import open3d as o3d
 
-def volume_to_pointcloud(volume):
 
-    img=volume.data
+def compute_edges(volume):
 
-    mask=img>img.max()*POINT_THRESHOLD
+    edges=[]
 
-    idx=np.argwhere(mask)
+    for slice in volume:
 
-    if len(idx)>POINT_SAMPLE:
-        idx=idx[np.random.choice(len(idx),POINT_SAMPLE,replace=False)]
+        slice=slice.astype(np.float32)
 
-    pts=idx.astype(float)
+        sobel=cv2.Sobel(slice,cv2.CV_32F,1,1)
 
-    pts[:,0]*=volume.spacing[0]
-    pts[:,1]*=volume.spacing[1]
-    pts[:,2]*=volume.spacing[2]
+        log=cv2.Laplacian(slice,cv2.CV_32F)
+
+        harris=cv2.cornerHarris(slice,2,3,0.04)
+
+        edge=(np.abs(sobel)+np.abs(log)+np.abs(harris))/3
+
+        edges.append(edge)
+
+    return np.stack(edges)
+
+
+def volume_to_pointcloud(vol):
+
+    volume=vol.data
+
+    edge_vol=compute_edges(volume)
+
+    pts=np.argwhere(edge_vol>0.2)
+
+    pts=pts.astype(np.float32)
 
     return pts
+
+
+def compute_fpfh(points):
+
+    pcd=o3d.geometry.PointCloud()
+
+    pcd.points=o3d.utility.Vector3dVector(points)
+
+    pcd.estimate_normals()
+
+    fpfh=o3d.pipelines.registration.compute_fpfh_feature(
+        pcd,
+        o3d.geometry.KDTreeSearchParamHybrid(
+            radius=25,
+            max_nn=100
+        )
+    )
+
+    return np.asarray(fpfh.data).T
+    
+
+
+def sample_dino_feature(dino_volume, points, vol_shape):
+
+    Df, Hf, Wf, C = dino_volume.shape
+    Dz, Hy, Wx = vol_shape
+
+    scale_y = Hf / Hy
+    scale_x = Wf / Wx
+
+    pts = points.copy()
+
+    z = np.clip(pts[:,0].astype(int),0,Df-1)
+
+    y = np.clip((pts[:,1]*scale_y).astype(int),0,Hf-1)
+
+    x = np.clip((pts[:,2]*scale_x).astype(int),0,Wf-1)
+
+    descriptors = dino_volume[z,y,x]
+
+    return descriptors
