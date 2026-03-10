@@ -55,31 +55,6 @@ class DenseDINO:
         return img
 
 
-    def extract_slice(self, img):
-
-        img = self.normalize_slice(img)
-
-        img = Image.fromarray(img).convert("RGB")
-
-        img = self.transform(img).unsqueeze(0).to(self.device)
-
-        with torch.no_grad():
-
-            feat = self.model.forward_features(img)
-
-            tokens = feat[:,1:,:]   # remove cls token
-
-        tokens = tokens.cpu().numpy()[0]
-
-        n = tokens.shape[0]
-
-        grid = int(np.sqrt(n))
-
-        feat_map = tokens.reshape(grid,grid,-1)
-
-        return feat_map
-
-
     def pca_reduce(self, feat_map, dim=16):
 
         h,w,c = feat_map.shape
@@ -96,47 +71,47 @@ class DenseDINO:
     def extract_volume(self, volume, batch_size=32):
 
         slices = []
-    
+
         for i in range(volume.shape[0]):
-    
+
             img = volume[i,:,:]
-    
+
             img = self.normalize_slice(img)
-    
+
             img = Image.fromarray(img).convert("RGB")
-    
+
             img = self.transform(img)
-    
+
             slices.append(img)
-    
+
         slices = torch.stack(slices).to(self.device)
-    
+
         feats = []
-    
+
         with torch.no_grad():
-    
+
             for i in range(0, slices.shape[0], batch_size):
-    
+
                 batch = slices[i:i+batch_size]
-    
+
                 feat = self.model.forward_features(batch)
-    
+
                 tokens = feat[:,1:,:]
-    
+
                 B,N,C = tokens.shape
-    
+
                 grid = int(np.sqrt(N))
-    
+
                 tokens = tokens.reshape(B,grid,grid,C)
-    
+
                 feats.append(tokens.cpu().numpy())
-    
+
         feats = np.concatenate(feats,axis=0)
-    
+
         feats_reduced = []
-    
+
         for f in feats:
-    
+
             feats_reduced.append(self.pca_reduce(f))
-    
+
         return np.array(feats_reduced)

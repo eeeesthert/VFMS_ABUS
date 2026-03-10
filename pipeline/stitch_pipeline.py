@@ -13,13 +13,16 @@ from geometry.pointcloud import (
     sample_dino_feature
 )
 
-from initialization.triview_init import initialize_triview
-from registration.teaser_registration import teaser_register
 from registration.ransac_registration import ransac_register
 from registration.icp_refinement import icp_refine
 from fusion.gpu_fusion import gpu_fuse
 
-def voxel_downsample(points, voxel=3):
+
+# ------------------------------------------------
+# voxel downsample
+# ------------------------------------------------
+
+def voxel_downsample(points, voxel=5):
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
@@ -28,10 +31,14 @@ def voxel_downsample(points, voxel=3):
 
     return np.asarray(pcd.points)
 
+
+# ------------------------------------------------
+# feature fusion
+# ------------------------------------------------
+
 def fuse_features(f_geo, f_dino):
 
     f_geo = f_geo / (np.linalg.norm(f_geo, axis=1, keepdims=True) + 1e-8)
-
     f_dino = f_dino / (np.linalg.norm(f_dino, axis=1, keepdims=True) + 1e-8)
 
     fused = np.concatenate([f_geo, f_dino], axis=1)
@@ -41,216 +48,282 @@ def fuse_features(f_geo, f_dino):
     return fused
 
 
-def run_pipeline(case_path):
-    
-    t0=time.time()
+# ------------------------------------------------
+# direction initialization
+# ------------------------------------------------
+
+def direction_init(ref_vol, mov_vol, direction):
+
+    T = np.eye(4)
+
+    ref_shape = np.array(ref_vol.data.shape)
+    mov_shape = np.array(mov_vol.data.shape)
+
+    if direction == "left":
+
+        T[2, 3] = -mov_shape[2] * 0.8
+
+    elif direction == "right":
+
+        T[2, 3] = ref_shape[2] * 0.8
+
+    elif direction == "up":
+
+        T[1, 3] = ref_shape[1] * 0.8
+
+    elif direction == "down":
+
+        T[1, 3] = -mov_shape[1] * 0.8
+
+    return T
 
 
-    # -------------------------
-    # load volumes
-    # -------------------------
+# ------------------------------------------------
+# DINO cache
+# ------------------------------------------------
 
-    lat = read_nrrd(f"{case_path}/LAT.nrrd")
-    ap  = read_nrrd(f"{case_path}/AP.nrrd")
-    med = read_nrrd(f"{case_path}/MED.nrrd")
+def load_or_extract_dino(vol, extractor, cache_dir, name):
+
+    os.makedirs(cache_dir, exist_ok=True)
+
+    cache_path = os.path.join(cache_dir, f"{name}_dino.npy")
+
+    if os.path.exists(cache_path):
+
+        print("Loading cached DINO:", name)
+
+        return np.load(cache_path)
+
+    print("Extracting DINO feature:", name)
+
+    feat = extractor.extract_volume(vol.data)
+
+    np.save(cache_path, feat)
+
+    return feat
 
 
-    extractor = DenseDINO()
+# ------------------------------------------------
+# two view registration
+# ------------------------------------------------
 
+def register_two_views(vol_ref, vol_mov, extractor, direction=None, cache_dir=None):
 
-    # -------------------------
-    # 1 DINO semantic features
-    # -------------------------
+    # -------------------------------
+    # DINO feature
+    # -------------------------------
 
-    print("Extracting DINO features")
+    ref_name = getattr(vol_ref, "name", "ref")
+    mov_name = getattr(vol_mov, "name", "mov")
 
-    lat_dino = extractor.extract_volume(lat.data)
-    ap_dino  = extractor.extract_volume(ap.data)
-    med_dino = extractor.extract_volume(med.data)
-    print("DINO time:",time.time()-t0)
+    ref_dino = load_or_extract_dino(
+        vol_ref,
+        extractor,
+        cache_dir,
+        ref_name
+    )
 
+    mov_dino = load_or_extract_dino(
+        vol_mov,
+        extractor,
+        cache_dir,
+        mov_name
+    )
 
-
-    # -------------------------
-    # 2 Edge-based PCD extraction
-    # -------------------------
+    # -------------------------------
+    # PCD extraction
+    # -------------------------------
 
     print("Extract PCD")
 
-    lat_pts = voxel_downsample(volume_to_pointcloud(lat))
-    ap_pts  = voxel_downsample(volume_to_pointcloud(ap))
-    med_pts = voxel_downsample(volume_to_pointcloud(med))
+    ref_pts = voxel_downsample(volume_to_pointcloud(vol_ref))
+    mov_pts = voxel_downsample(volume_to_pointcloud(vol_mov))
 
+    ref_pts = ref_pts[::5]
+    mov_pts = mov_pts[::5]
 
-
-    # optional downsample (0.2)
-
-    lat_pts = lat_pts[::5]
-    ap_pts  = ap_pts[::5]
-    med_pts  = med_pts[::5]
-
-
-
-    # -------------------------
-    # 3 Geometric descriptor
-    # -------------------------
+    # -------------------------------
+    # FPFH
+    # -------------------------------
 
     print("Compute FPFH")
 
-    lat_geo = compute_fpfh(lat_pts)
-    ap_geo  = compute_fpfh(ap_pts)
-    med_geo  = compute_fpfh(med_pts)
+    ref_geo = compute_fpfh(ref_pts)
+    mov_geo = compute_fpfh(mov_pts)
 
-
-
-    # -------------------------
-    # 4 DINO descriptor sampling
-    # -------------------------
+    # -------------------------------
+    # DINO descriptor sampling
+    # -------------------------------
 
     print("Sample DINO descriptors")
 
-    #lat_dino_desc = sample_dino_feature(lat_dino, lat_pts)
-    #ap_dino_desc  = sample_dino_feature(ap_dino, ap_pts)
-    lat_dino_desc = sample_dino_feature(
-        lat_dino,
-        lat_pts,
-        lat.data.shape
-    )
-    
-    ap_dino_desc = sample_dino_feature(
-        ap_dino,
-        ap_pts,
-        ap.data.shape
+    ref_dino_desc = sample_dino_feature(
+        ref_dino,
+        ref_pts,
+        vol_ref.data.shape
     )
 
-    med_dino_desc = sample_dino_feature(
-        med_dino,
-        med_pts,
-        med.data.shape
+    mov_dino_desc = sample_dino_feature(
+        mov_dino,
+        mov_pts,
+        vol_mov.data.shape
     )
 
-    # -------------------------
-    # 5 Feature fusion
-    # -------------------------
+    # -------------------------------
+    # feature fusion
+    # -------------------------------
 
     print("Feature fusion")
 
-    lat_feat = fuse_features(lat_geo, lat_dino_desc)
-    ap_feat  = fuse_features(ap_geo, ap_dino_desc)
-    med_feat = fuse_features(med_geo, med_dino_desc)
-    
+    ref_feat = fuse_features(ref_geo, ref_dino_desc)
+    mov_feat = fuse_features(mov_geo, mov_dino_desc)
+
+    # -------------------------------
+    # random limit points
+    # -------------------------------
+
     max_points = 5000
 
-    if lat_pts.shape[0] > max_points:
-    
-        idx = np.random.choice(lat_pts.shape[0], max_points, replace=False)
-    
-        lat_pts = lat_pts[idx]
-        lat_feat = lat_feat[idx]
-    
-    if ap_pts.shape[0] > max_points:
-    
-        idx = np.random.choice(ap_pts.shape[0], max_points, replace=False)
-    
-        ap_pts = ap_pts[idx]
-        ap_feat = ap_feat[idx]
-        
-    if med_pts.shape[0] > max_points:
-    
-        idx = np.random.choice(med_pts.shape[0], max_points, replace=False)
-    
-        med_pts = med_pts[idx]
-        med_feat = med_feat[idx]
+    if ref_pts.shape[0] > max_points:
 
+        idx = np.random.choice(ref_pts.shape[0], max_points, replace=False)
 
+        ref_pts = ref_pts[idx]
+        ref_feat = ref_feat[idx]
 
-    # -------------------------
-    # 6 Tri-view initialization
-    # -------------------------
+    if mov_pts.shape[0] > max_points:
 
-    print("Auto tri-view initialization")
-    
+        idx = np.random.choice(mov_pts.shape[0], max_points, replace=False)
 
-    T_lat, T_ap, T_med = initialize_triview(
-        lat_pts,
-        ap_pts,
-        med_pts
+        mov_pts = mov_pts[idx]
+        mov_feat = mov_feat[idx]
+
+    # -------------------------------
+    # RANSAC
+    # -------------------------------
+
+    print("RANSAC registration")
+
+    T_ransac = ransac_register(
+        mov_pts,
+        ref_pts,
+        mov_feat,
+        ref_feat
     )
 
+    # -------------------------------
+    # direction constraint
+    # -------------------------------
 
+    if direction is not None:
 
-    # -------------------------
-    # 7 Robust registration
-    # -------------------------
-    print("RANSAC coarse registration")
+        print("Applying direction constraint:", direction)
 
-    T_lat_ransac = ransac_register(
-        lat_pts,
-        ap_pts,
-        lat_feat,
-        ap_feat
-    )
-    
-    T_med_ransac = ransac_register(
-        med_pts,
-        ap_pts,
-        med_feat,
-        ap_feat
-    )
-    
-    #print("TEASER++ robust registration")
-    
-    #T_teaser = teaser_register(
-     #   lat_pts,
-      #  ap_pts,
-       # lat_feat,
-        #ap_feat
-        #init_T=T_ransac
-    #)
-    
+        T_init = direction_init(vol_ref, vol_mov, direction)
+
+        T_ransac = T_init @ T_ransac
+
+    # -------------------------------
+    # ICP
+    # -------------------------------
+
     print("ICP refinement")
-    
-    T_lat_icp = icp_refine(
-        lat_pts,
-        ap_pts,
-        T_lat_ransac
-    )
-    
-    T_med_icp = icp_refine(
-        med_pts,
-        ap_pts,
-        T_med_ransac
+
+    T_icp = icp_refine(
+        mov_pts,
+        ref_pts,
+        T_ransac,
+        direction
     )
 
+    print("Estimated translation:", T_icp[:3, 3])
 
-    # -------------------------
-    # 8 Volume fusion
-    # -------------------------
-
-    print("GPU fusion")
-
-    fused = gpu_fuse(
-        [lat, ap, med],
-        [T_lat_icp, np.eye(4), T_med_icp]
-    )
+    return T_icp
 
 
+# ------------------------------------------------
+# pipeline
+# ------------------------------------------------
 
-    # -------------------------
-    # 9 Save result
-    # -------------------------
+def run_pipeline(case_path):
 
-    print("Saving result")
+    t0 = time.time()
+
+    view1 = read_nrrd(f"{case_path}/view_1.nrrd")
+    view2 = read_nrrd(f"{case_path}/view_2.nrrd")
+    view3 = read_nrrd(f"{case_path}/view_3.nrrd")
+
+    # 给 volume 加名字（用于 cache）
+    view1.name = "view1"
+    view2.name = "view2"
+    view3.name = "view3"
+
+    extractor = DenseDINO()
+
+    case_name = os.path.basename(case_path)
 
     os.makedirs("results", exist_ok=True)
-    
-    case_name = os.path.basename(case_path)
-    
-    output_path = f"results/{case_name}_stitched.nrrd"
-    
-    nrrd.write(output_path, fused)
-    
-    print("Saved:", output_path)
 
+    cache_dir = f"{case_path}/cache"
 
-    print("Stitching finished")
+    # ------------------------------------------------
+    # STEP1
+    # ------------------------------------------------
+
+    print("\n===== STEP1 view2 to view1 =====")
+
+    T12 = register_two_views(
+        view1,
+        view2,
+        extractor,
+        direction="left",
+        cache_dir=cache_dir
+    )
+
+    fused1 = gpu_fuse(
+        [view1, view2],
+        [np.eye(4), T12]
+    )
+
+    fused1_path = f"results/{case_name}_fused1.nrrd"
+
+    nrrd.write(fused1_path, fused1)
+
+    print("Saved fused1:", fused1_path)
+
+    # ------------------------------------------------
+    # STEP2
+    # ------------------------------------------------
+
+    print("\n===== STEP2 view3 to fused1 =====")
+
+    fused1_vol = type(view1)(
+        fused1,
+        view1.spacing,
+        view1.origin
+    )
+
+    fused1_vol.name = "fused1"
+
+    T23 = register_two_views(
+        fused1_vol,
+        view3,
+        extractor,
+        direction="right",
+        cache_dir=cache_dir
+    )
+
+    fused_final = gpu_fuse(
+        [fused1_vol, view3],
+        [np.eye(4), T23]
+    )
+
+    final_path = f"results/{case_name}_final.nrrd"
+
+    nrrd.write(final_path, fused_final)
+
+    print("Saved final:", final_path)
+
+    print("\nPipeline finished")
+
+    print("Total time:", time.time() - t0)

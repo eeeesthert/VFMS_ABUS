@@ -1,13 +1,19 @@
-
 import os
 from pipeline.stitch_pipeline import run_pipeline
-from config.settings import DATASET_PATH
+
+DATASET_PATH="dataset"
 
 def main():
-    cases = sorted(os.listdir(DATASET_PATH))
-    for case in cases:
-        print("Processing:", case)
-        run_pipeline(os.path.join(DATASET_PATH, case))
 
-if __name__ == "__main__":
+    cases=os.listdir(DATASET_PATH)
+
+    for case in cases:
+
+        case_path=os.path.join(DATASET_PATH,case)
+
+        print("Processing:",case)
+
+        run_pipeline(case_path)
+
+if __name__=="__main__":
     main()
