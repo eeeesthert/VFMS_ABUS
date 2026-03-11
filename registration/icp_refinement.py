@@ -1,7 +1,6 @@
 import open3d as o3d
 import numpy as np
 
-
 def icp_refine(src_pts, tgt_pts, T_init, direction=None):
 
     # -----------------------------
@@ -44,11 +43,11 @@ def icp_refine(src_pts, tgt_pts, T_init, direction=None):
 
     if direction == "left":
 
-        T[2, 3] = -abs(T[2, 3])
+        T[0, 3] = -abs(T[0, 3])
 
     elif direction == "right":
 
-        T[2, 3] = abs(T[2, 3])
+        T[0, 3] = abs(T[0, 3])
 
     elif direction == "up":
 
@@ -57,7 +56,5 @@ def icp_refine(src_pts, tgt_pts, T_init, direction=None):
     elif direction == "down":
 
         T[1, 3] = -abs(T[1, 3])
-
     print("ICP translation:", T[:3, 3])
-
     return T
