@@ -116,7 +116,7 @@ def register_two_views(vol_ref, vol_mov, extractor, direction=None, cache_dir=No
     return T_icp
 
 
-def run_pipeline(case_path):
+def run_pipeline(case_path, device="cuda:1"):
     t0 = time.time()
 
     view1 = read_nrrd(f"{case_path}/view_1.nrrd")
@@ -127,7 +127,7 @@ def run_pipeline(case_path):
     view2.name = "view2"
     view3.name = "view3"
 
-    extractor = DenseDINO()
+    extractor = DenseDINO(device=device)
 
     case_name = os.path.basename(case_path)
 
