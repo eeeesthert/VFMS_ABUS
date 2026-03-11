@@ -42,9 +42,10 @@ def direction_init(ref_vol, mov_vol, direction):
     ref_shape = np.array(ref_vol.data.shape)
     mov_shape = np.array(mov_vol.data.shape)
     if direction == "left":
-        T[2, 3] = -mov_shape[2] * 0.8
+        # left/right should expand the first axis of the fused volume
+        T[0, 3] = -mov_shape[0] * 0.8
     elif direction == "right":
-        T[2, 3] = ref_shape[2] * 0.8
+        T[0, 3] = ref_shape[0] * 0.8
     elif direction == "up":
         T[1, 3] = ref_shape[1] * 0.8
     elif direction == "down":
