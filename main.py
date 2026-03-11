@@ -2,6 +2,7 @@ import os
 from pipeline.stitch_pipeline import run_pipeline
 
 DATASET_PATH="dataset"
+DEVICE=os.getenv("VFMS_DEVICE", "cuda:1")
 
 def main():
 
@@ -13,7 +14,7 @@ def main():
 
         print("Processing:",case)
 
-        run_pipeline(case_path)
+        run_pipeline(case_path, device=DEVICE)
 
 if __name__=="__main__":
     main()
