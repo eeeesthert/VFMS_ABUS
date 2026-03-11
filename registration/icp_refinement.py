@@ -1,6 +1,7 @@
 import open3d as o3d
 import numpy as np
 
+
 def icp_refine(src_pts, tgt_pts, T_init, direction=None):
 
     # -----------------------------
@@ -56,5 +57,7 @@ def icp_refine(src_pts, tgt_pts, T_init, direction=None):
     elif direction == "down":
 
         T[1, 3] = -abs(T[1, 3])
+
     print("ICP translation:", T[:3, 3])
+
     return T
