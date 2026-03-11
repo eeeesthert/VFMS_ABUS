@@ -9,9 +9,9 @@ from sklearn.decomposition import PCA
 
 class DenseDINO:
 
-    def __init__(self, device="cuda"):
+    def __init__(self, device="cuda:1"):
 
-        self.device = device
+        self.device = self._resolve_device(device)
 
         model_path = "/home/b224/wwmt/VFMStitch_ABUS_research/models/dinov2_vitb14_pretrain.pth"
 
@@ -27,7 +27,7 @@ class DenseDINO:
 
         self.model.load_state_dict(ckpt, strict=False)
 
-        self.model = self.model.to(device)
+        self.model = self.model.to(self.device)
         self.model.eval()
 
         self.transform = T.Compose([
@@ -40,7 +40,26 @@ class DenseDINO:
             )
         ])
 
+    def _resolve_device(self, device):
 
+        if not device.startswith("cuda"):
+            return device
+
+        if not torch.cuda.is_available():
+            print("CUDA unavailable, fallback to CPU")
+            return "cpu"
+
+        if device == "cuda":
+            return "cuda:0"
+
+        if ":" in device:
+            idx = int(device.split(":", 1)[1])
+            if idx < torch.cuda.device_count():
+                return device
+            print(f"{device} unavailable, fallback to cuda:0")
+            return "cuda:0"
+
+        return device
     def normalize_slice(self, img):
 
         img = img.astype(np.float32)
