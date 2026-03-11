@@ -3,6 +3,24 @@ import torch.nn.functional as F
 import numpy as np
 
 
+def resolve_torch_device(device=None):
+    if device is not None:
+        if isinstance(device, torch.device):
+            device = str(device)
+        if str(device).startswith("cuda") and not torch.cuda.is_available():
+            print("CUDA unavailable, fallback to CPU")
+            return "cpu"
+        if str(device).startswith("cuda:"):
+            idx = int(str(device).split(":", 1)[1])
+            if idx >= torch.cuda.device_count():
+                print(f"{device} unavailable, fallback to cuda:0")
+                return "cuda:0" if torch.cuda.is_available() else "cpu"
+        return str(device)
+
+    if torch.cuda.is_available():
+        return "cuda:1" if torch.cuda.device_count() > 1 else "cuda:0"
+    return "cpu"
+    
 def compute_weight_map(shape):
     d, h, w = shape
     z = np.minimum(np.arange(d), np.arange(d)[::-1])
@@ -111,8 +129,8 @@ def warp_volume(volume, transform, out_shape, global_min_pt, device):
     )
     return warped[0, 0]
 
-def gpu_fuse(volumes, transforms):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+def gpu_fuse(volumes, transforms, device=None):
+    device = resolve_torch_device(device)
     min_pt, max_pt = compute_global_bbox(volumes, transforms)
     size = (max_pt - min_pt + 1).astype(np.int32)
     print("Global FOV:", size)
