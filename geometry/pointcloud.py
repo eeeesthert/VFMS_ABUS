@@ -62,17 +62,23 @@ def sample_dino_feature(dino_volume, points, vol_shape):
     Df, Hf, Wf, C = dino_volume.shape
     Dz, Hy, Wx = vol_shape
 
-    scale_y = Hf / Hy
-    scale_x = Wf / Wx
+    # scale_y = Hf / Hy
+    # scale_x = Wf / Wx
+    scale_z = Df / max(Dz, 1)
+    scale_y = Hf / max(Hy, 1)
+    scale_x = Wf / max(Wx, 1)
 
     pts = points.copy()
 
-    z = np.clip(pts[:,0].astype(int),0,Df-1)
+    # z = np.clip(pts[:,0].astype(int),0,Df-1)
+    z = np.clip((pts[:, 0] * scale_z).astype(int), 0, Df - 1)
+    y = np.clip((pts[:, 1] * scale_y).astype(int), 0, Hf - 1)
+    x = np.clip((pts[:, 2] * scale_x).astype(int), 0, Wf - 1)
 
-    y = np.clip((pts[:,1]*scale_y).astype(int),0,Hf-1)
+    # y = np.clip((pts[:,1]*scale_y).astype(int),0,Hf-1)
 
-    x = np.clip((pts[:,2]*scale_x).astype(int),0,Wf-1)
+    # x = np.clip((pts[:,2]*scale_x).astype(int),0,Wf-1)
 
-    descriptors = dino_volume[z,y,x]
-
+    # descriptors = dino_volume[z,y,x]
+    descriptors = dino_volume[z, y, x]
     return descriptors
