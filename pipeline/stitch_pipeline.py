@@ -43,44 +43,39 @@ def direction_init(ref_vol, mov_vol, direction):
     mov_shape = np.array(mov_vol.data.shape)
     if direction == "left":
         # left/right should expand the first axis of the fused volume
-        T[0, 3] = -mov_shape[0] * 0.6
+        T[0, 3] = -mov_shape[0] * 0.8
     elif direction == "right":
-        T[0, 3] = ref_shape[0] * 0.6
+        T[0, 3] = ref_shape[0] * 0.8
     elif direction == "up":
         T[1, 3] = ref_shape[1] * 0.8
     elif direction == "down":
         T[1, 3] = -mov_shape[1] * 0.8
     return T
-def sanitize_translation(T, ref_vol, mov_vol, direction):
-    """Force transform to a plausible translation-only solution for tri-view ABUS."""
-    T = T.copy()
-    # In this pipeline views are acquired in the same scanner coordinate frame,
-    # therefore we only keep translation to avoid duplicated structures caused by
-    # unstable sparse feature rotations/flips.
-    T[:3, :3] = np.eye(3, dtype=T.dtype)
+    
+def enforce_direction_prior(T, ref_vol, mov_vol, direction):
+    if direction is None:
+        return T, False
+
+    axis = 0 if direction in ("left", "right") else 1
+    sign = -1.0 if direction in ("left", "down") else 1.0
 
     ref_shape = np.array(ref_vol.data.shape, dtype=np.float32)
     mov_shape = np.array(mov_vol.data.shape, dtype=np.float32)
 
-    axis = 0 if direction in ("left", "right") else 1
-    max_span = float(ref_shape[axis] + mov_shape[axis])
-    min_shift = 0.1 * float(min(ref_shape[axis], mov_shape[axis]))
-    max_shift = 0.9 * max_span
+    expected = 0.8 * (mov_shape[axis] if sign < 0 else ref_shape[axis])
+    observed = float(T[axis, 3])
 
-    if direction == "left":
-        shift = -np.clip(abs(float(T[0, 3])), min_shift, max_shift)
-        T[0, 3] = shift
-    elif direction == "right":
-        shift = np.clip(abs(float(T[0, 3])), min_shift, max_shift)
-        T[0, 3] = shift
-    elif direction == "up":
-        shift = np.clip(abs(float(T[1, 3])), min_shift, max_shift)
-        T[1, 3] = shift
-    elif direction == "down":
-        shift = -np.clip(abs(float(T[1, 3])), min_shift, max_shift)
-        T[1, 3] = shift
+    # keep only plausible displacement to avoid duplicated large-overlap mosaics
+    min_abs = 0.35 * expected
+    max_abs = 1.40 * expected
+    corrected = False
 
-    return T
+    if np.sign(observed) != np.sign(sign) or not (min_abs <= abs(observed) <= max_abs):
+        T = T.copy()
+        T[axis, 3] = sign * np.clip(abs(observed), min_abs, max_abs)
+        corrected = True
+
+    return T, corrected
 
 
 
@@ -135,19 +130,15 @@ def register_two_views(vol_ref, vol_mov, extractor, direction=None, cache_dir=No
 
     print("RANSAC registration")
     T_ransac = ransac_register(mov_pts, ref_pts, mov_feat, ref_feat)
-    # if direction is not None:
-    #     print("Applying direction constraint:", direction)
-    #     T_init = direction_init(vol_ref, vol_mov, direction)
-    #     T_ransac = T_init @ T_ransac
-    T_init = direction_init(vol_ref, vol_mov, direction) if direction is not None else np.eye(4)
-
-    # Keep directional offset as robust prior and let RANSAC estimate local correction.
-    T_seed = T_ransac @ T_init
-    print("ICP refinement")
-    # T_icp = icp_refine(mov_pts, ref_pts, T_ransac, direction)
-    T_icp = icp_refine(mov_pts, ref_pts, T_seed, direction)
     if direction is not None:
-        T_icp = sanitize_translation(T_icp, vol_ref, vol_mov, direction)
+        print("Applying direction constraint:", direction)
+        T_init = direction_init(vol_ref, vol_mov, direction)
+        T_ransac = T_init @ T_ransac
+    print("ICP refinement")
+    T_icp = icp_refine(mov_pts, ref_pts, T_ransac, direction)
+    T_icp, corrected = enforce_direction_prior(T_icp, vol_ref, vol_mov, direction)
+    if corrected:
+        print("Applied direction-prior translation clamp:", T_icp[:3, 3])
     print("Estimated translation:", T_icp[:3, 3])
 
     return T_icp
