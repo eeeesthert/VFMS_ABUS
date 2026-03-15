@@ -66,8 +66,8 @@ def enforce_direction_prior(T, ref_vol, mov_vol, direction):
     observed = float(T[axis, 3])
 
     # keep only plausible displacement to avoid duplicated large-overlap mosaics
-    min_abs = 0.35 * expected
-    max_abs = 1.40 * expected
+    min_abs = 0.55 * expected
+    max_abs = 1.20 * expected
     corrected = False
 
     if np.sign(observed) != np.sign(sign) or not (min_abs <= abs(observed) <= max_abs):
@@ -77,6 +77,23 @@ def enforce_direction_prior(T, ref_vol, mov_vol, direction):
 
     return T, corrected
 
+
+def is_plausible_direction_translation(T, ref_vol, mov_vol, direction):
+    if direction is None:
+        return True
+
+    axis = 0 if direction in ("left", "right") else 1
+    sign = -1.0 if direction in ("left", "down") else 1.0
+    ref_shape = np.array(ref_vol.data.shape, dtype=np.float32)
+    mov_shape = np.array(mov_vol.data.shape, dtype=np.float32)
+
+    expected = 0.8 * (mov_shape[axis] if sign < 0 else ref_shape[axis])
+    observed = float(T[axis, 3])
+
+    if np.sign(observed) != np.sign(sign):
+        return False
+
+    return 0.45 * expected <= abs(observed) <= 1.35 * expected
 
 
 def load_or_extract_dino(vol, extractor, cache_dir, name):
@@ -130,17 +147,24 @@ def register_two_views(vol_ref, vol_mov, extractor, direction=None, cache_dir=No
 
     print("RANSAC registration")
     T_ransac = ransac_register(mov_pts, ref_pts, mov_feat, ref_feat)
+    T_seed = T_ransac
     if direction is not None:
         print("Applying direction constraint:", direction)
         T_init = direction_init(vol_ref, vol_mov, direction)
-        T_ransac = T_init @ T_ransac
+        # T_ransac = T_init @ T_ransac
+        # T_init is an initialization prior and should not be multiplied onto
+        # an already-absolute RANSAC transform. Multiplication double-counts
+        # translation and often causes over-large FOV / duplicate anatomy.
+        if not is_plausible_direction_translation(T_ransac, vol_ref, vol_mov, direction):
+            print("RANSAC translation implausible for direction; fallback to directional init")
+            T_seed = T_init
     print("ICP refinement")
-    T_icp = icp_refine(mov_pts, ref_pts, T_ransac, direction)
+    # T_icp = icp_refine(mov_pts, ref_pts, T_ransac, direction)
+    T_icp = icp_refine(mov_pts, ref_pts, T_seed, direction)
     T_icp, corrected = enforce_direction_prior(T_icp, vol_ref, vol_mov, direction)
     if corrected:
         print("Applied direction-prior translation clamp:", T_icp[:3, 3])
     print("Estimated translation:", T_icp[:3, 3])
-
     return T_icp
 
 
