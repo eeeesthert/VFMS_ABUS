@@ -50,7 +50,8 @@ def direction_init(ref_vol, mov_vol, direction):
         T[1, 3] = ref_shape[1] * 0.8
     elif direction == "down":
         T[1, 3] = -mov_shape[1] * 0.8
-    return Tdef sanitize_translation(T, ref_vol, mov_vol, direction):
+    return T
+def sanitize_translation(T, ref_vol, mov_vol, direction):
     """Force transform to a plausible translation-only solution for tri-view ABUS."""
     T = T.copy()
     # In this pipeline views are acquired in the same scanner coordinate frame,
