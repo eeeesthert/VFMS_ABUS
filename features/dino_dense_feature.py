@@ -31,8 +31,11 @@ class DenseDINO:
         self.model.eval()
 
         self.transform = T.Compose([
-            T.Resize(518),
-            T.CenterCrop(518),
+            # T.Resize(518),
+            # T.CenterCrop(518),
+            # Keep complete slice content. CenterCrop can remove lateral tissue
+            # and break the point-to-feature coordinate mapping used downstream.
+            T.Resize((518, 518)),
             T.ToTensor(),
             T.Normalize(
                 mean=(0.485,0.456,0.406),
