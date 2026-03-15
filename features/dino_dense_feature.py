@@ -53,14 +53,14 @@ class DenseDINO:
             return "cpu"
 
         if device == "cuda":
-            return "cuda:0"
+            return "cuda:1"
 
         if ":" in device:
             idx = int(device.split(":", 1)[1])
             if idx < torch.cuda.device_count():
                 return device
-            print(f"{device} unavailable, fallback to cuda:0")
-            return "cuda:0"
+            print(f"{device} unavailable, fallback to cuda:1")
+            return "cuda:1"
 
         return device
     def normalize_slice(self, img):
